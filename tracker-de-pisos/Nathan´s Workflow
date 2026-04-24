@@ -1,0 +1,178 @@
+# Weekly Order Monitoring & Reporting Workflow
+
+An automated n8n workflow that fetches order data from an ERP system on a weekly basis, filters orders by status and assigned employee, registers matching orders in Airtable, and sends a summary report to a Discord channel.
+
+---
+
+## Overview
+
+| Property       | Detail                          |
+|----------------|---------------------------------|
+| **Platform**   | n8n                             |
+| **Trigger**    | Scheduled — Every Monday at 9:00 AM |
+| **Status**     | Inactive (template / manual activation required) |
+| **Integrations** | ERP (HTTP), Airtable, Discord |
+
+---
+
+## Workflow Diagram
+
+```
+[Schedule Trigger]
+       │
+       ▼
+[HTTP Request → ERP System]
+       │
+       ▼
+[If: orderStatus == "processing" AND assignedEmployee == <configured value>]
+       │
+  ┌────┴────┐
+TRUE       FALSE
+  │           │
+  ▼           ▼
+[Calculate  [Calculate
+ totals]     totals]
+  │           │
+  ▼           ▼
+[Edit      [Discord
+ Fields]    Notification]
+  │
+  ▼
+[Create Airtable Record]
+```
+
+---
+
+## Nodes Description
+
+### 1. Schedule Trigger
+- **Type:** Schedule Trigger
+- **Frequency:** Every Monday at 9:00 AM
+- **Purpose:** Initiates the workflow automatically at the start of each work week.
+
+---
+
+### 2. HTTP Request (ERP System)
+- **Type:** HTTP Request
+- **Method:** GET
+- **Authentication:** HTTP Header Auth (API key via custom header)
+- **Purpose:** Fetches the current list of orders from the ERP system webhook endpoint.
+- **Note:** The endpoint URL and authentication credentials must be configured in n8n credentials — do not hardcode them.
+
+---
+
+### 3. If (Conditional Filter)
+- **Type:** If
+- **Logic:** `AND` — both conditions must be true:
+  - `orderStatus` equals `"processing"`
+  - `employeeName` equals the configured employee filter value
+- **Output:**
+  - **TRUE branch** → order matches both criteria → proceeds to registration
+  - **FALSE branch** → order does not match → proceeds to summary report
+
+---
+
+### 4a. Code in JavaScript *(TRUE branch)*
+- **Type:** Code (JavaScript)
+- **Purpose:** Iterates over all matched items and computes:
+  - `totalBooked` — count of matching orders
+  - `bookedSum` — sum of `orderPrice` across matching orders
+
+---
+
+### 4b. Code in JavaScript *(FALSE branch)*
+- **Type:** Code (JavaScript)
+- **Purpose:** Iterates over all non-matching items and computes:
+  - `totalBooked` — count of non-matching orders
+  - `bookedSum` — sum of `orderPrice` across non-matching orders
+
+---
+
+### 5. Edit Fields *(TRUE branch)*
+- **Type:** Set
+- **Purpose:** Maps and normalizes the following fields before writing to Airtable:
+  - `orderID` (number)
+  - `employeeName` (string)
+
+---
+
+### 6. Create a Record — Airtable *(TRUE branch)*
+- **Type:** Airtable (create operation)
+- **Target:** Configured Airtable base and table (e.g., an order processing table)
+- **Fields written:**
+  - `orderID`
+  - `employeeName`
+- **Note:** Airtable base ID, table ID, and API credentials must be set in n8n credentials.
+
+---
+
+### 7. Discord Notification *(FALSE branch)*
+- **Type:** Discord (Webhook)
+- **Purpose:** Sends a weekly summary message to a configured Discord channel, reporting the total number and combined value of non-matching booked orders.
+- **Example message format:**
+  > *"This week we've [N] booked orders with a total value of [X]."*
+- **Note:** The Discord webhook URL must be configured in n8n credentials — do not expose it in the workflow configuration.
+
+---
+
+## Prerequisites
+
+Before activating this workflow, ensure the following are configured in your n8n instance:
+
+- **ERP Webhook Credential** — HTTP Header Auth with the appropriate API key
+- **Airtable Credential** — Personal Access Token with read/write access to the target base
+- **Discord Credential** — Webhook URL for the target Discord channel
+
+---
+
+## Setup Instructions
+
+1. Import the workflow JSON into your n8n instance.
+2. Open each node and attach the appropriate credentials:
+   - `HTTP Request` → ERP credential
+   - `Create a record` → Airtable credential + select your base and table
+   - `Discord` → Discord webhook credential
+3. In the `If` node, update the `employeeName` filter value to match your use case.
+4. Activate the workflow.
+
+---
+
+## Security Notes
+
+- **Never** store API keys, webhook URLs, or authentication tokens directly inside workflow node parameters.
+- Use n8n's built-in **Credentials** system to manage all secrets securely.
+- Regularly rotate API keys and webhook URLs according to your organization's security policy.
+- Restrict access to this workflow to authorized team members only.
+
+---
+
+## Logic Summary
+
+```
+Every Monday at 9 AM
+  → Fetch orders from ERP
+  → For each order:
+      IF status is "processing" AND assigned to target employee:
+          → Compute order totals
+          → Normalize fields
+          → Write record to Airtable
+      ELSE:
+          → Compute order totals
+          → Send weekly summary to Discord
+```
+
+---
+
+## File Structure
+
+```
+/
+└── README.md          ← This file
+└── workflow.json      ← n8n workflow export (add here)
+```
+
+---
+
+## License
+
+This workflow is provided as a template for educational and internal use. Adapt it freely to your organization's needs.
