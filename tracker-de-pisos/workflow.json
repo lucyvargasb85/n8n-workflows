@@ -1,0 +1,176 @@
+{
+  "name": "Tracker de Pisos - Gmail a Google Sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🏠 Tracker de Pisos — Gmail → Google Sheets\n\n**¿Qué hace este workflow?**\nRevisa tu Gmail **cada hora** buscando alertas de portales inmobiliarios. Extrae automáticamente título, precio, fuente y fecha de cada piso y los guarda (sin duplicados) en Google Sheets.\n\n**Portales soportados:** Fotocasa · Idealista · Yaencontre\n\n**Flujo:**  ① Gmail Trigger → ② Extraer Pisos (JS) → ③ Separar Items → ④ Guardar en Sheets",
+        "color": 2
+      },
+      "id": "sticky-overview",
+      "name": "📋 Descripción del Workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-200, -200]
+    },
+    {
+      "parameters": {
+        "content": "## ⚙️ Setup — Pasos para configurar\n\n**1. Suscríbete a alertas de pisos** en:\n- fotocasa.es\n- idealista.com\n- yaencontre.com\n\n**2. Credencial Gmail OAuth2**\n- Credentials → New → Gmail OAuth2\n- Autoriza con el Gmail donde recibes las alertas\n- Asígnala al nodo \"Nuevos Emails de Pisos\"\n\n**3. Credencial Google Sheets OAuth2**\n- Credentials → New → Google Sheets OAuth2\n- Asígnala al nodo \"Guardar Piso en Google Sheets\"\n\n**4. Crea tu Google Sheet** con columnas: TITULO · PRECIO · FUENTE · FECHA\n- Pega la URL de tu sheet en el nodo de Google Sheets\n\n**5. Activa el workflow** con el toggle superior derecho",
+        "color": 3
+      },
+      "id": "sticky-setup",
+      "name": "⚙️ Instrucciones de Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "content": "## 📬 Contacto & Créditos\n\n**Autora:** Lucy Vargas\n**Email:** lucy.vargasb85@gmail.com\n\nWorkflow creado como parte del proceso de aprendizaje de n8n.\nLibre para usar y adaptar. ¡Cualquier feedback es bienvenido! 🙌\n\n_Repositorio: github.com/lucyvargas/n8n-workflows_",
+        "color": 4
+      },
+      "id": "sticky-contact",
+      "name": "📬 Contacto",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-200, 200]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "from:enviosfotocasa@fotocasa.es OR from:news@diario.idealista.com OR from:no-reply@envios.yaencontre.com",
+          "readStatus": "both"
+        },
+        "options": {}
+      },
+      "id": "node-gmail-trigger",
+      "name": "Nuevos Emails de Pisos",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [240, 304],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Detectar portal usando JSON.stringify (funciona con cualquier tipo de dato en \"from\")\nconst allFromData = JSON.stringify({\n  from: $json.from,\n  headerFrom: ($json.headers && ($json.headers.from || $json.headers.From)) || '',\n  subject: $json.subject || ''\n}).toLowerCase();\n\nlet fuente = 'Desconocido';\nif (allFromData.includes('fotocasa')) fuente = 'Fotocasa';\nelse if (allFromData.includes('idealista')) fuente = 'Idealista';\nelse if (allFromData.includes('yaencontre')) fuente = 'Ya encontré';\n\n// Contenido del email\nconst textContent = String($json.text || '');\nconst htmlContent = String($json.html || '');\n\nlet body = textContent;\nif (body.trim().length < 30) {\n  body = htmlContent\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, '\\n');\n}\n\nbody = body.replace(/\\(\\s*https?:\\/\\/[^)]+\\)/g, '').replace(/https?:\\/\\/\\S+/g, '');\n\n// Fecha en español\nconst meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];\nconst dateObj = new Date($json.date || '');\nconst fecha = !isNaN(dateObj.getTime())\n  ? dateObj.getDate() + ' de ' + meses[dateObj.getMonth()] + ' ' + dateObj.getFullYear()\n  : 'Fecha desconocida';\n\nconst pisos = [];\n\nif (fuente === 'Fotocasa') {\n  const lines = body.split('\\n').map(l => l.trim()).filter(Boolean);\n  for (let i = 0; i < lines.length; i++) {\n    if (/^\\d[\\d.]+\\s*€\\s*$/.test(lines[i])) {\n      const precio = lines[i].trim();\n      for (let j = i+1; j < Math.min(i+6, lines.length); j++) {\n        const m = lines[j].match(/^piso\\s*[·•]\\s*(.+)$/i);\n        if (m) { pisos.push({ titulo: m[1].trim(), precio, fuente, fecha }); break; }\n      }\n    }\n  }\n}\n\nif (fuente === 'Ya encontré') {\n  const flat = body.replace(/\\n/g, ' ');\n  const re = /Piso en venta en ([^,.]+)/gi;\n  const pr = /(\\d[\\d.]+)\\s*€/g;\n  const titles = [], prices = [];\n  let m;\n  while ((m = re.exec(flat)) !== null) titles.push(m[1].trim());\n  while ((m = pr.exec(flat)) !== null) prices.push(m[1] + ' €');\n  titles.forEach((t, i) => pisos.push({ titulo: t, precio: prices[i] || 'N/D', fuente, fecha }));\n}\n\nif (fuente === 'Idealista') {\n  const lines = body.split('\\n').map(l => l.trim()).filter(Boolean);\n  for (let i = 1; i < lines.length; i++) {\n    const pm = lines[i].match(/(\\d[\\d.]+)\\s*€/);\n    if (pm && lines[i-1].length > 5 && lines[i-1].length < 100) {\n      pisos.push({ titulo: lines[i-1], precio: pm[1] + ' €', fuente, fecha });\n    }\n  }\n}\n\nreturn { json: { pisos: pisos } };"
+      },
+      "id": "node-code",
+      "name": "Extraer Pisos del Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [544, 304]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "pisos",
+        "options": {}
+      },
+      "id": "node-split",
+      "name": "Separar Pisos en Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [848, 304]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Pisos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "TITULO": "={{ $json.titulo }}",
+            "PRECIO": "={{ $json.precio }}",
+            "FUENTE": "={{ $json.fuente }}",
+            "FECHA": "={{ $json.fecha }}"
+          },
+          "matchingColumns": ["TITULO"],
+          "schema": [
+            { "id": "TITULO", "displayName": "TITULO", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "PRECIO", "displayName": "PRECIO", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "FUENTE", "displayName": "FUENTE", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "FECHA", "displayName": "FECHA", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "node-sheets",
+      "name": "Guardar Piso en Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1152, 304],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Nuevos Emails de Pisos": {
+      "main": [
+        [
+          {
+            "node": "Extraer Pisos del Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Pisos del Email": {
+      "main": [
+        [
+          {
+            "node": "Separar Pisos en Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Pisos en Items": {
+      "main": [
+        [
+          {
+            "node": "Guardar Piso en Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "n8nVersion": "1.x"
+  }
+}
